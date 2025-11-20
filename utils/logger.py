@@ -47,7 +47,9 @@ def setup_logger(name: str, level: Optional[str] = None) -> logging.Logger:
     logger.setLevel(log_level)
     
     # Create console handler
-    handler = logging.StreamHandler(sys.stdout)
+    # Use stderr instead of stdout so logs don't interfere with 
+    # MCP stdio communication (which uses stdout for data)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(log_level)
     
     # Create formatter

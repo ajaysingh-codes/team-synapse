@@ -10,5 +10,8 @@ vertexai>=1.38.0
 # Utilities
 python-dotenv>=1.0.0
 
-# Optional: For future Neo4j integration (Phase 4)
-# neo4j>=5.14.0
+# Neo4j service
+neo4j>=5.14.0
+
+# Model Context Protocol
+mcp
