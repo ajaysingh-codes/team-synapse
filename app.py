@@ -407,33 +407,46 @@ def _format_action_items(analysis: Dict[str, Any]) -> str:
 
 
 def _simplify_status_message(raw_status: str, had_analysis: bool) -> str:
-    """Collapse the verbose pipeline status down to a compact, UX-friendly string."""
+    """Collapse the verbose pipeline status down to a compact, UX-friendly HTML status card."""
     if not raw_status:
-        return "**Status:** Ready"
-    
+        return '<div class="status-card status-ready">📊 Ready - Upload or record a meeting to begin analysis</div>'
+
     if "❌" in raw_status or "Error" in raw_status:
-        return raw_status
-    
+        return f'<div class="status-card status-error">❌ {raw_status.replace("❌", "").strip()}</div>'
+
     if "Neo4j storage failed" in raw_status or "Neo4j storage error" in raw_status:
         if had_analysis:
-            return "✅ Analysis complete (graph storage had a non-critical issue)."
-        return "⚠️ Graph storage encountered an issue."
-    
+            return '<div class="status-card status-warning">⚠️ Analysis complete (graph storage had a non-critical issue)</div>'
+        return '<div class="status-card status-warning">⚠️ Graph storage encountered an issue</div>'
+
     if had_analysis:
         if "Stored in Neo4j knowledge graph" in raw_status:
-            return "✅ Analysis complete and linked into the knowledge graph."
-        return "✅ Analysis complete."
-    
-    return raw_status
+            return '<div class="status-card status-success">✅ Analysis complete and linked into the knowledge graph</div>'
+        return '<div class="status-card status-success">✅ Analysis complete</div>'
+
+    # For progress messages, show them in a blue card
+    return f'<div class="status-card status-ready">🔄 {raw_status}</div>'
 
 
 def _build_graph_html(analysis: Optional[Dict[str, Any]]) -> str:
     """Build a lightweight, static 'graph snapshot'."""
     if not analysis:
         return """
-        <div class="ts-graph-empty">
-            <div><strong>No graph yet.</strong> Run an analysis to see how this meeting links to people, clients, and projects.</div>
-            <div class="ts-graph-hint">We’ll render a small topology-style snapshot of the knowledge graph here.</div>
+        <div class="ts-graph-empty" style="text-align: center; padding: 2.5rem 2rem;">
+            <div style="font-size: 4rem; margin-bottom: 1rem;">🕸️</div>
+            <div style="font-size: 1.3rem; font-weight: 600; color: #e5e7eb; margin-bottom: 1rem;">
+                Knowledge Graph Awaiting Data
+            </div>
+            <div style="text-align: left; display: inline-block; margin-top: 1rem;">
+                <p style="color: #9ca3af; font-size: 0.95rem; margin-bottom: 0.8rem;">After analysis, you'll see:</p>
+                <ul style="color: #9ca3af; font-size: 0.9rem; line-height: 1.8; list-style: none; padding-left: 0;">
+                    <li>🎯 <strong>Meeting nodes</strong> with title, date, and sentiment</li>
+                    <li>⚡ <strong>Action items</strong> linked to assignees</li>
+                    <li>👥 <strong>People</strong> who own tasks</li>
+                    <li>🏢 <strong>Clients</strong> discussed in meetings</li>
+                    <li>📊 <strong>Projects</strong> and their relationships</li>
+                </ul>
+            </div>
         </div>
         """
     
@@ -715,7 +728,67 @@ def create_app() -> gr.Blocks:
     .gradio-container {
         background: #020617;
     }
+    /* Status Card Styling */
+    .status-card {
+        min-height: 80px;
+        padding: 1.2rem 1.5rem;
+        border-radius: 0.75rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        margin-bottom: 1rem;
+        transition: all 0.3s ease;
+    }
+    .status-ready {
+        background: rgba(59, 130, 246, 0.1);
+        border-left: 5px solid #3b82f6;
+        color: #93c5fd;
+    }
+    .status-success {
+        background: rgba(34, 197, 94, 0.1);
+        border-left: 5px solid #22c55e;
+        color: #86efac;
+    }
+    .status-error {
+        background: rgba(239, 68, 68, 0.1);
+        border-left: 5px solid #ef4444;
+        color: #fca5a5;
+    }
+    .status-warning {
+        background: rgba(251, 191, 36, 0.1);
+        border-left: 5px solid #fbbf24;
+        color: #fde68a;
+    }
+    /* Upload Box Styling */
+    .upload-required {
+        border: 2px solid #3b82f6 !important;
+        background: rgba(59, 130, 246, 0.05) !important;
+        border-radius: 0.75rem !important;
+        padding: 1rem !important;
+    }
+    .upload-optional {
+        border: 2px dashed #6b7280 !important;
+        background: rgba(55, 65, 81, 0.3) !important;
+        border-radius: 0.75rem !important;
+        padding: 1rem !important;
+    }
     /* Better button styling */
+    .btn-analyze {
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%) !important;
+        box-shadow: 0 8px 20px rgba(99, 102, 241, 0.4) !important;
+        border: none !important;
+        font-size: 1.1rem !important;
+        font-weight: 600 !important;
+        padding: 0.85rem 1.8rem !important;
+        border-radius: 0.75rem !important;
+        transition: all 0.3s ease !important;
+        color: white !important;
+    }
+    .btn-analyze:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 12px 32px rgba(99, 102, 241, 0.6) !important;
+    }
     button {
         font-size: 1.1rem !important;
         font-weight: 600 !important;
@@ -761,18 +834,41 @@ def create_app() -> gr.Blocks:
                             gr.Markdown("### 📥 Ingest Stream")
                             with gr.Tabs():
                                 with gr.TabItem("📁 Upload Recording"):
-                                    audio_input = gr.File(label="Meeting Recording", file_types=["audio"], type="filepath")
-                                    context_input_upload = gr.File(label="Calendar Invite / Agenda (optional)", file_types=["text"], type="filepath", file_count="single")
-                                    analyze_btn = gr.Button("✨ Analyze with Gemini", variant="primary", size="lg")
+                                    audio_input = gr.File(
+                                        label="🎵 Meeting Recording (Required)",
+                                        file_types=["audio"],
+                                        type="filepath",
+                                        elem_classes=["upload-required"]
+                                    )
+                                    context_input_upload = gr.File(
+                                        label="📅 Calendar Invite / Agenda (Optional - Improves Accuracy)",
+                                        file_types=["text"],
+                                        type="filepath",
+                                        file_count="single",
+                                        elem_classes=["upload-optional"]
+                                    )
+                                    analyze_btn = gr.Button("✨ Analyze with Gemini", variant="primary", size="lg", elem_classes=["btn-analyze"])
                                     gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Supported audio:</strong> MP3, WAV, M4A, OGG (max 100 MB)<br/><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
-                                
+
                                 with gr.TabItem("🎤 Record Live"):
-                                    audio_record = gr.Audio(sources=["microphone"], type="filepath", label="Record Your Meeting", show_download_button=True)
-                                    context_input_record = gr.File(label="Calendar Invite / Agenda (optional)", file_types=["text"], type="filepath", file_count="single")
-                                    record_btn = gr.Button("✨ Analyze Recording", variant="primary", size="lg")
+                                    audio_record = gr.Audio(
+                                        sources=["microphone"],
+                                        type="filepath",
+                                        label="🎤 Record Your Meeting (Required)",
+                                        show_download_button=True,
+                                        elem_classes=["upload-required"]
+                                    )
+                                    context_input_record = gr.File(
+                                        label="📅 Calendar Invite / Agenda (Optional - Improves Accuracy)",
+                                        file_types=["text"],
+                                        type="filepath",
+                                        file_count="single",
+                                        elem_classes=["upload-optional"]
+                                    )
+                                    record_btn = gr.Button("✨ Analyze Recording", variant="primary", size="lg", elem_classes=["btn-analyze"])
                                     gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Record your meeting</strong> directly in the browser.<br/><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
-                            
-                            status_output = gr.Markdown("**Status:** Ready", elem_classes=["status-text"])
+
+                            status_output = gr.HTML('<div class="status-card status-ready">📊 Ready - Upload or record a meeting to begin analysis</div>')
                         
                         # RIGHT: Intelligence
                         with gr.Column(scale=2):
