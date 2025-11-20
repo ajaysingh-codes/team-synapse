@@ -43,12 +43,30 @@ class GeminiConfig:
 
 
 @dataclass
+class Neo4jConfig:
+    """Neo4j database config."""
+    uri: str
+    username: str
+    password: str
+    database: str = "neo4j" # default
+
+    def __post_init__(self):
+        if self.uri == "YOUR_NEO4J_URI_HERE":
+            raise ValueError(
+                "NEO4J_URI must be set. Please configure your Neo4j AuraDB instance."
+            )
+        if not self.username or not self.password:
+            raise ValueError(
+                "NEO4J_USERNAME and NEO4J_PASSWORD must be set."
+            )
+
+@dataclass
 class AppConfig:
     """Application-wide configuration."""
     max_file_size_mb: int = 100
     allowed_audio_formats: tuple = (".mp3", ".wav", ".m4a", ".ogg")
     log_level: str = "INFO"
-
+    neo4j_enabled: bool = True
 
 class Config:
     """Main configuration class."""
@@ -67,9 +85,16 @@ class Config:
             max_output_tokens=int(os.getenv("GEMINI_MAX_TOKENS", "8192"))
         )
         
+        self.neo4j = Neo4jConfig(
+            uri=os.getenv("NEO4J_URI", "YOUR_NEO4J_URI_HERE"),
+            username=os.getenv("NEO4J_USERNAME", "neo4j"),
+            password=os.getenv("NEO4J_PASSWORD", "password")
+        )
+        
         self.app = AppConfig(
             max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "100")),
-            log_level=os.getenv("LOG_LEVEL", "INFO")
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            neo4j_enabled=os.getenv("NEO4J_ENABLED", "True") == "True"
         )
     
     def validate(self) -> bool:
