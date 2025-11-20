@@ -515,6 +515,12 @@ def _build_graph_html(analysis: Optional[Dict[str, Any]]) -> str:
     """
 
 
+def _toggle_nav_menu(current_state: bool) -> tuple:
+    """Toggle the navigation menu visibility."""
+    new_state = not current_state
+    return gr.update(visible=new_state), new_state
+
+
 def _show_home_page() -> tuple:
     """Helper: show ingestion page, hide chatbot page."""
     return gr.update(visible=True), gr.update(visible=False)
@@ -574,6 +580,26 @@ def create_app() -> gr.Blocks:
         border: 1px solid rgba(55, 65, 81, 0.85) !important;
         box-shadow: 0 18px 45px rgba(15, 23, 42, 0.9) !important;
         padding: 1.5rem !important;
+    }
+    /* Collapsible Navigation Styles */
+    .nav-sidebar {
+        transition: all 0.3s ease !important;
+        min-width: 200px !important;
+    }
+    .nav-sidebar.collapsed {
+        min-width: 60px !important;
+        max-width: 60px !important;
+    }
+    .nav-toggle {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+        background: rgba(79, 70, 229, 0.2) !important;
+        border: 1px solid rgba(79, 70, 229, 0.4) !important;
+    }
+    .nav-menu-title {
+        margin-bottom: 0.5rem !important;
+        font-weight: 600 !important;
+        color: #c7d2fe !important;
     }
     .action-card {
         background: rgba(22, 163, 74, 0.09);
@@ -739,55 +765,70 @@ def create_app() -> gr.Blocks:
         # HEADER
         create_header()
         
+        # State for navigation menu visibility
+        nav_menu_state = gr.State(value=True)
+
         # MAIN LAYOUT
         with gr.Row():
-            # LEFT SIDEBAR MENU
-            with gr.Column(scale=1, min_width=200):
-                gr.Markdown("### Menu")
-                nav_ingest = gr.Button("🎙️ Ingest Meeting", variant="secondary", size="lg")
-                nav_chat = gr.Button("💬 Meeting Copilot", variant="secondary", size="lg")
-                
-                # Add some spacing or other menu items if needed
-                gr.Markdown("---")
-                
+            # LEFT SIDEBAR MENU (Collapsible)
+            with gr.Column(scale=1, min_width=200, elem_classes=["nav-sidebar"]) as nav_sidebar:
+                nav_toggle = gr.Button("☰", elem_classes=["nav-toggle"], size="sm")
+                nav_menu_content = gr.Column(visible=True)
+                with nav_menu_content:
+                    gr.Markdown("### Menu", elem_classes=["nav-menu-title"])
+                    nav_ingest = gr.Button("🎙️ Ingest Meeting", variant="secondary", size="lg")
+                    nav_chat = gr.Button("💬 Meeting Copilot", variant="secondary", size="lg")
+                    gr.Markdown("---")
+
             # RIGHT CONTENT AREA
             with gr.Column(scale=4):
                 # PAGE 1: INGESTION
                 with gr.Column(visible=True, elem_classes=["main-card"]) as page_ingest:
                     gr.Markdown("## 🎙️ Upload or Record Meeting")
+
+                    # TOP ROW: Upload/Record and Calendar Invite side by side
                     with gr.Row():
-                        # LEFT: Ingest
                         with gr.Column(scale=1, elem_classes=["glass-panel"]):
                             gr.Markdown("### 📥 Ingest Stream")
                             with gr.Tabs():
                                 with gr.TabItem("📁 Upload Recording"):
                                     audio_input = gr.File(label="Meeting Recording", file_types=["audio"], type="filepath")
-                                    context_input_upload = gr.File(label="Calendar Invite / Agenda (optional)", file_types=["text"], type="filepath", file_count="single")
                                     analyze_btn = gr.Button("✨ Analyze with Gemini", variant="primary", size="lg")
-                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Supported audio:</strong> MP3, WAV, M4A, OGG (max 100 MB)<br/><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
-                                
+                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Supported audio:</strong> MP3, WAV, M4A, OGG (max 100 MB)</p>""")
+
                                 with gr.TabItem("🎤 Record Live"):
                                     audio_record = gr.Audio(sources=["microphone"], type="filepath", label="Record Your Meeting", show_download_button=True)
-                                    context_input_record = gr.File(label="Calendar Invite / Agenda (optional)", file_types=["text"], type="filepath", file_count="single")
                                     record_btn = gr.Button("✨ Analyze Recording", variant="primary", size="lg")
-                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Record your meeting</strong> directly in the browser.<br/><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
-                            
-                            status_output = gr.Markdown("**Status:** Ready", elem_classes=["status-text"])
-                        
-                        # RIGHT: Intelligence
-                        with gr.Column(scale=2):
-                            with gr.Row():
-                                with gr.Column(elem_classes=["glass-panel"]):
-                                    gr.Markdown("### 📝 Executive Summary")
-                                    summary_output = gr.Markdown(value="", elem_classes=["output-card"])
-                                with gr.Column(elem_classes=["glass-panel"]):
-                                    gr.Markdown("### 🕸️ Knowledge Graph")
-                                    graph_html = gr.HTML(value=_build_graph_html(None), label="Graph Preview")
-                            with gr.Row():
-                                with gr.Column(elem_classes=["glass-panel"]):
-                                    gr.Markdown("### ⚡ Action Items")
-                                    results_output = gr.Markdown(value="", elem_classes=["output-card"])
-                    
+                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Record your meeting</strong> directly in the browser.</p>""")
+
+                        with gr.Column(scale=1, elem_classes=["glass-panel"]):
+                            gr.Markdown("### 📄 Calendar Invite / Agenda (optional)")
+                            with gr.Tabs():
+                                with gr.TabItem("Upload"):
+                                    context_input_upload = gr.File(label="For Upload Mode", file_types=["text"], type="filepath", file_count="single")
+                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
+
+                                with gr.TabItem("Record"):
+                                    context_input_record = gr.File(label="For Record Mode", file_types=["text"], type="filepath", file_count="single")
+                                    gr.Markdown("""<p style="font-size: 0.9rem; color: #94a3b8; margin-top: 1rem;"><strong>Optional context:</strong> Upload a calendar invite (.ics) to auto-fill attendees.</p>""")
+
+                    # Status
+                    status_output = gr.Markdown("**Status:** Ready", elem_classes=["status-text"])
+
+                    # BOTTOM ROW: Executive Summary, Action Items, and Knowledge Graph
+                    with gr.Row():
+                        with gr.Column(scale=1, elem_classes=["glass-panel"]):
+                            gr.Markdown("### 📝 Executive Summary")
+                            summary_output = gr.Markdown(value="", elem_classes=["output-card"])
+
+                        with gr.Column(scale=1, elem_classes=["glass-panel"]):
+                            gr.Markdown("### ⚡ Action Items")
+                            results_output = gr.Markdown(value="", elem_classes=["output-card"])
+
+                        with gr.Column(scale=1, elem_classes=["glass-panel"]):
+                            gr.Markdown("### 🕸️ Knowledge Graph")
+                            graph_html = gr.HTML(value=_build_graph_html(None), label="Graph Preview")
+
                     gr.Markdown("""---<p style="text-align: center; color: #64748b; font-size: 0.9rem;">💡 <strong>Tip:</strong> For best results, upload a calendar invite first, then your recording.</p>""")
                 
                 # PAGE 2: CHATBOT
@@ -835,8 +876,12 @@ def create_app() -> gr.Blocks:
                     
                     # Chat Event Handlers
                     
-            
+
         # EVENT BINDINGS
+        # Navigation toggle
+        nav_toggle.click(fn=_toggle_nav_menu, inputs=[nav_menu_state], outputs=[nav_menu_content, nav_menu_state])
+
+        # Page navigation
         nav_ingest.click(fn=_show_home_page, outputs=[page_ingest, page_chat])
         nav_chat.click(fn=_show_chat_page, outputs=[page_ingest, page_chat])
         
