@@ -1,110 +1,162 @@
 """
 MCP Server for Team Synapse.
-Exposes Neo4j knowledge graph capabilities as tools for the Meeting Copilot.
+Exposes knowledge graph and visualization tools via Model Context Protocol.
+
+Usage:
+    python mcp_server.py
+
+The server runs via stdio transport and is typically launched as a subprocess
+by the main application when the chat interface is opened.
 """
-from typing import List, Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
-from services.neo4j_service import neo4j_service
+from utils import setup_logger
+from config import config
+
+# Import tool functions from organized modules
+from mcp_tools.neo4j_tools import (
+    get_graph_stats,
+    get_action_items,
+    search_meetings,
+    find_blockers,
+    get_historical_context,
+    analyze_team_health,
+)
+from mcp_tools.miro_tools import (
+    create_meeting_mindmap,
+    get_miro_board_url,
+)
+
+logger = setup_logger(__name__, config.app.log_level)
 
 # Initialize FastMCP server
-mcp = FastMCP("team-synapse-neo4j")
+mcp = FastMCP("team-synapse")
+
+
+# =============================================================================
+# NEO4J KNOWLEDGE GRAPH TOOLS
+# =============================================================================
 
 @mcp.tool()
-def search_meetings(query: str) -> str:
+def tool_get_graph_stats() -> str:
     """
-    Search for meetings by title, summary, or content.
-    
-    Args:
-        query: The search term to look for in meeting records.
+    Get high-level statistics about the knowledge graph.
+    Shows counts of meetings, people, clients, projects, action items, and decisions.
     """
-    results = neo4j_service.search_meetings(query)
-    if not results:
-        return "No meetings found matching that query."
-    
-    formatted = []
-    for m in results:
-        formatted.append(f"- {m['title']} ({m['meetingDate']}): {m['summary'][:150]}...")
-    
-    return "\n".join(formatted)
+    return get_graph_stats()
+
 
 @mcp.tool()
-def get_action_items(person_name: str) -> str:
+def tool_get_action_items(person_name: str) -> str:
     """
     Get action items assigned to a specific person.
-    
+    Shows task details, status, priority, due dates, and any blockers.
+
     Args:
-        person_name: The name of the person to look up.
+        person_name: Name of the person to query action items for
     """
-    items = neo4j_service.get_action_items_by_person(person_name)
-    if not items:
-        return f"No action items found for {person_name}."
-    
-    formatted = []
-    for item in items:
-        status_icon = "✓" if item['status'] == 'completed' else "☐"
-        formatted.append(f"{status_icon} {item['task']} (Due: {item['dueDate']}, Priority: {item['priority']}) - from meeting '{item['meetingTitle']}'")
-    
-    return "\n".join(formatted)
+    return get_action_items(person_name)
+
 
 @mcp.tool()
-def get_project_meetings(project_name: str) -> str:
+def tool_search_meetings(keyword: str) -> str:
     """
-    Get a list of meetings related to a specific project.
-    
+    Search meetings by keyword to find past discussions and decisions.
+    Searches through meeting titles, summaries, and transcripts.
+
     Args:
-        project_name: The name of the project.
+        keyword: Search term to look for in meeting content
     """
-    meetings = neo4j_service.get_meetings_by_project(project_name)
-    if not meetings:
-        return f"No meetings found linked to project '{project_name}'."
-    
-    formatted = []
-    for m in meetings:
-        formatted.append(f"- {m['title']} ({m['meetingDate']})\n  Summary: {m['summary']}")
-    
-    return "\n\n".join(formatted)
+    return search_meetings(keyword)
+
 
 @mcp.tool()
-def get_client_history(client_name: str) -> str:
+def tool_find_blockers() -> str:
     """
-    Get history and relationship details for a specific client.
-    
-    Args:
-        client_name: The name of the client company.
+    Find all blocked action items across the organization.
+    Critical for identifying bottlenecks and escalation needs.
+    Returns blocked items sorted by priority.
     """
-    # The service method returns a list, but we usually expect one record for a specific client
-    results = neo4j_service.get_client_relationships(client_name)
-    if not results:
-        return f"No information found for client '{client_name}'."
-    
-    # Since we searched by specific name, we likely just want the first result or all if multiple matches
-    formatted = []
-    for r in results:
-        recent = ", ".join(r['recentMeetings']) if r['recentMeetings'] else "None"
-        formatted.append(f"Client: {r['clientName']}\nTotal Meetings: {r['meetingCount']}\nRecent Meetings: {recent}")
-    
-    return "\n---\n".join(formatted)
+    return find_blockers()
+
 
 @mcp.tool()
-def get_graph_stats() -> str:
+def tool_get_historical_context(topic: str, days: int = 30) -> str:
     """
-    Get high-level statistics about the knowledge graph (counts of meetings, people, etc.).
+    Retrieve historical context about a topic from past meetings.
+    Helps prevent repeated discussions and surface forgotten decisions.
+
+    Args:
+        topic: Topic or keyword to search for
+        days: Number of days to look back (default 30)
     """
-    stats = neo4j_service.get_knowledge_graph_summary()
-    if not stats:
-        return "Could not retrieve graph statistics."
-        
-    return (
-        f"Graph Statistics:\n"
-        f"- Meetings: {stats.get('meetings', 0)}\n"
-        f"- People: {stats.get('people', 0)}\n"
-        f"- Clients: {stats.get('clients', 0)}\n"
-        f"- Projects: {stats.get('projects', 0)}\n"
-        f"- Action Items: {stats.get('actionItems', 0)}\n"
-        f"- Decisions: {stats.get('decisions', 0)}"
+    return get_historical_context(topic, days)
+
+
+@mcp.tool()
+def tool_analyze_team_health() -> str:
+    """
+    Analyze overall team health based on action items and workload.
+    Provides insights on completion rates, blockers, and identifies
+    team members who may be overloaded.
+    """
+    return analyze_team_health()
+
+
+# =============================================================================
+# MIRO VISUALIZATION TOOLS
+# =============================================================================
+
+@mcp.tool()
+def tool_get_miro_board_url() -> str:
+    """
+    Get the URL to the configured Miro board for visual collaboration.
+    Returns the board URL or configuration instructions if not set up.
+    """
+    return get_miro_board_url()
+
+
+@mcp.tool()
+def tool_create_meeting_mindmap(
+    meeting_title: str,
+    meeting_date: str,
+    action_items: str = "",
+    decisions: str = "",
+    people: str = "",
+    clients: str = "",
+    projects: str = ""
+) -> str:
+    """
+    Create a visual mind map for a meeting in Miro.
+    Creates a central meeting node with branches for action items,
+    decisions, people, clients, and projects.
+
+    Args:
+        meeting_title: Title of the meeting
+        meeting_date: Date of the meeting (YYYY-MM-DD format)
+        action_items: Comma-separated list of action items (optional)
+        decisions: Comma-separated list of decisions made (optional)
+        people: Comma-separated list of people mentioned (optional)
+        clients: Comma-separated list of clients discussed (optional)
+        projects: Comma-separated list of projects mentioned (optional)
+    """
+    return create_meeting_mindmap(
+        meeting_title=meeting_title,
+        meeting_date=meeting_date,
+        action_items=action_items,
+        decisions=decisions,
+        people=people,
+        clients=clients,
+        projects=projects
     )
 
-if __name__ == "__main__":
-    # Run the MCP server
-    mcp.run(transport='stdio')
 
+# =============================================================================
+# SERVER ENTRY POINT
+# =============================================================================
+
+if __name__ == "__main__":
+    logger.info("Starting Team Synapse MCP server...")
+    logger.info("Available tools: get_graph_stats, get_action_items, search_meetings, "
+                "find_blockers, get_historical_context, analyze_team_health, "
+                "get_miro_board_url, create_meeting_mindmap")
+    mcp.run(transport='stdio')

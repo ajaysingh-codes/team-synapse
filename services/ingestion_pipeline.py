@@ -72,6 +72,7 @@ class IngestionPipeline:
         self, 
         local_file_path: str,
         meeting_context: Optional[Dict[str, Any]] = None,
+        analysis_mode: str = "corporate",
     ) -> Generator[Tuple[str, Optional[Dict[str, Any]]], None, None]:
         """
         Process an audio file through the complete ingestion pipeline.
@@ -125,10 +126,12 @@ class IngestionPipeline:
                 gcs_uri,
                 mime_type,
                 meeting_context=meeting_context,
+                analysis_mode=analysis_mode,
             )
             
             # Enrich analysis with metadata
             analysis["meetingId"] = meeting_id
+            analysis["tenantId"] = config.app.tenant_id
             analysis["originalFilename"] = filename
             analysis["processingTimestamp"] = datetime.utcnow().isoformat()
             analysis["gcsUri"] = gcs_uri
@@ -209,7 +212,14 @@ class IngestionPipeline:
         """Generate a unique meeting ID."""
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         safe_filename = os.path.splitext(filename)[0].replace(" ", "_")[:30]
-        return f"mtg_{timestamp}_{safe_filename}"
+        tenant = (config.app.tenant_id or "demo").strip()
+        safe_tenant = (
+            tenant.replace("@", "_")
+                  .replace(" ", "_")
+                  .replace("/", "_")
+                  .replace("\\", "_")
+        )[:30]
+        return f"{safe_tenant}_mtg_{timestamp}_{safe_filename}"
     
     def _get_mime_type(self, filepath: str) -> str:
         """Determine MIME type from file extension."""
@@ -220,6 +230,8 @@ class IngestionPipeline:
             ".wav": "audio/wav",
             ".m4a": "audio/mp4",
             ".ogg": "audio/ogg",
+            ".mp4": "video/mp4",
+            ".mov": "video/quicktime",
         }
         
         return mime_types.get(ext, "audio/mpeg")

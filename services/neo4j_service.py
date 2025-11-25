@@ -45,10 +45,16 @@ class Neo4jService:
         """Create indexes on key properties for query performance."""
         indexes = [
             "CREATE INDEX meeting_id IF NOT EXISTS FOR (m:Meeting) ON (m.meetingId)",
+            "CREATE INDEX meeting_tenant IF NOT EXISTS FOR (m:Meeting) ON (m.tenantId)",
             "CREATE INDEX person_name IF NOT EXISTS FOR (p:Person) ON (p.name)",
             "CREATE INDEX person_email IF NOT EXISTS FOR (p:Person) ON (p.email)",
+            "CREATE INDEX person_tenant IF NOT EXISTS FOR (p:Person) ON (p.tenantId)",
             "CREATE INDEX client_name IF NOT EXISTS FOR (c:Client) ON (c.name)",
+            "CREATE INDEX client_tenant IF NOT EXISTS FOR (c:Client) ON (c.tenantId)",
             "CREATE INDEX project_name IF NOT EXISTS FOR (p:Project) ON (p.name)",
+            "CREATE INDEX project_tenant IF NOT EXISTS FOR (p:Project) ON (p.tenantId)",
+            "CREATE INDEX actionitem_tenant IF NOT EXISTS FOR (a:ActionItem) ON (a.tenantId)",
+            "CREATE INDEX decision_tenant IF NOT EXISTS FOR (d:Decision) ON (d.tenantId)",
         ]
         
         try:
@@ -109,12 +115,12 @@ class Neo4jService:
         invite_meta = analysis.get("inviteMetadata")
         invite_attendees = invite_meta.get("attendees") if invite_meta else None
         if action_items:
-            self._create_action_items(tx, meeting_id, action_items, invite_attendees)
+            self._create_action_items(tx, meeting_id, action_items, invite_attendees, analysis.get("tenantId"))
         
         # 3. Create and link Key Decisions
         decisions = analysis.get("keyDecisions", [])
         if decisions:
-            self._create_decisions(tx, meeting_id, decisions)
+            self._create_decisions(tx, meeting_id, decisions, analysis.get("tenantId"))
         
         # 4. (Intentionally do NOT create generic Person nodes for every mention or invitee)
         # We only create/link Person nodes where they actually own work (action items),
@@ -123,40 +129,57 @@ class Neo4jService:
         # 5. Create and link Clients
         clients = analysis.get("mentionedClients", [])
         if clients:
-            self._create_clients(tx, meeting_id, clients)
+            self._create_clients(tx, meeting_id, clients, analysis.get("tenantId"))
         
         # 6. Create and link Projects
         projects = analysis.get("mentionedProjects", [])
         if projects:
-            self._create_projects(tx, meeting_id, projects)
+            self._create_projects(tx, meeting_id, projects, analysis.get("tenantId"))
         
         logger.debug(f"Transaction complete for meeting: {meeting_id}")
     
     def _create_meeting_node(self, tx, analysis: Dict[str, Any]):
-        """Create the central Meeting node."""
+        """Create the central Meeting node with enhanced fields."""
         query = """
         CREATE (m:Meeting {
             meetingId: $meetingId,
+            tenantId: $tenantId,
             title: $title,
             summary: $summary,
             meetingDate: $meetingDate,
             sentiment: $sentiment,
             processingTimestamp: $processingTimestamp,
             originalFilename: $originalFilename,
-            transcript: $transcript
+            transcript: $transcript,
+            personaMode: $personaMode,
+            topics: $topics,
+            meetingType: $meetingType,
+            duration: $duration,
+            urgencyLevel: $urgencyLevel,
+            requiresFollowUp: $requiresFollowUp
         })
         RETURN m.meetingId AS meetingId
         """
         
+        # Extract enhanced fields if available
+        metadata = analysis.get("metadata", {})
+        
         params = {
             "meetingId": analysis["meetingId"],
+            "tenantId": analysis.get("tenantId"),
             "title": analysis.get("meetingTitle", "Untitled Meeting"),
             "summary": analysis.get("summary", ""),
             "meetingDate": analysis.get("meetingDate", "unknown"),
             "sentiment": analysis.get("sentiment", "neutral"),
             "processingTimestamp": analysis.get("processingTimestamp", datetime.utcnow().isoformat()),
             "originalFilename": analysis.get("originalFilename", ""),
-            "transcript": analysis.get("transcript", "")[:10000]  # Limit transcript size
+            "transcript": analysis.get("transcript", "")[:10000],  # Limit transcript size
+            "personaMode": analysis.get("personaMode", "corporate"),
+            "topics": analysis.get("topics", []),
+            "meetingType": analysis.get("meetingType", "other"),
+            "duration": analysis.get("duration"),
+            "urgencyLevel": metadata.get("urgencyLevel", "normal"),
+            "requiresFollowUp": metadata.get("requiresFollowUp", False),
         }
         
         result = tx.run(query, params)
@@ -169,19 +192,24 @@ class Neo4jService:
         meeting_id: str,
         action_items: List[Dict[str, Any]],
         invite_attendees: Optional[List[Dict[str, Any]]] = None,
+        tenant_id: Optional[str] = None,
     ):
         """Create ActionItem nodes and link them to Meeting and People."""
         for idx, item in enumerate(action_items):
-            # Create ActionItem node
+            # Create ActionItem node with enhanced fields
             query_item = """
             MATCH (m:Meeting {meetingId: $meetingId})
             CREATE (a:ActionItem {
                 actionId: $actionId,
+                tenantId: $tenantId,
                 task: $task,
                 assignee: $assignee,
                 dueDate: $dueDate,
                 priority: $priority,
-                status: $status
+                status: $status,
+                blockers: $blockers,
+                estimatedEffort: $estimatedEffort,
+                assigneeRole: $assigneeRole
             })
             CREATE (m)-[:HAS_ACTION_ITEM]->(a)
             RETURN a.actionId AS actionId
@@ -193,11 +221,15 @@ class Neo4jService:
             params = {
                 "meetingId": meeting_id,
                 "actionId": action_id,
+                "tenantId": tenant_id,
                 "task": item.get("task", ""),
                 "assignee": assignee,
                 "dueDate": item.get("dueDate", "none"),
                 "priority": item.get("priority", "unspecified"),
-                "status": "pending"
+                "status": item.get("status", "pending"),
+                "blockers": item.get("blockers", []),
+                "estimatedEffort": item.get("estimatedEffort", "unknown"),
+                "assigneeRole": item.get("assigneeRole", ""),
             }
             
             tx.run(query_item, params)
@@ -229,9 +261,11 @@ class Neo4jService:
 
                 if email:
                     query_person = """
-                    MERGE (p:Person {email: $email})
-                    ON CREATE SET p.name = $name
-                    ON MATCH SET p.name = coalesce(p.name, $name)
+                    MERGE (p:Person {email: $email, tenantId: $tenantId})
+                    ON CREATE SET p.name = $name, p.role = $role, p.createdAt = datetime()
+                    ON MATCH SET p.name = coalesce(p.name, $name),
+                                 p.role = coalesce($role, p.role),
+                                 p.lastSeenAt = datetime()
                     WITH p
                     MATCH (a:ActionItem {actionId: $actionId})
                     MERGE (p)-[:ASSIGNED_TO]->(a)
@@ -239,12 +273,14 @@ class Neo4jService:
                     params_person = {
                         "email": email,
                         "name": canonical_name,
+                        "role": item.get("assigneeRole", ""),
                         "actionId": action_id,
+                        "tenantId": tenant_id,
                     }
                 else:
                     # Fallback: merge by name only
                     query_person = """
-                    MERGE (p:Person {name: $name})
+                    MERGE (p:Person {name: $name, tenantId: $tenantId})
                     WITH p
                     MATCH (a:ActionItem {actionId: $actionId})
                     MERGE (p)-[:ASSIGNED_TO]->(a)
@@ -252,19 +288,21 @@ class Neo4jService:
                     params_person = {
                         "name": canonical_name,
                         "actionId": action_id,
+                        "tenantId": tenant_id,
                     }
 
                 tx.run(query_person, params_person)
         
         logger.debug(f"Created {len(action_items)} action items for {meeting_id}")
     
-    def _create_decisions(self, tx, meeting_id: str, decisions: List[str]):
+    def _create_decisions(self, tx, meeting_id: str, decisions: List[str], tenant_id: Optional[str] = None):
         """Create Decision nodes and link them to Meeting."""
         for idx, decision_text in enumerate(decisions):
             query = """
             MATCH (m:Meeting {meetingId: $meetingId})
             CREATE (d:Decision {
                 decisionId: $decisionId,
+                tenantId: $tenantId,
                 description: $description
             })
             CREATE (m)-[:HAS_DECISION]->(d)
@@ -273,14 +311,15 @@ class Neo4jService:
             params = {
                 "meetingId": meeting_id,
                 "decisionId": f"{meeting_id}_decision_{idx}",
-                "description": decision_text
+                "description": decision_text,
+                "tenantId": tenant_id,
             }
             
             tx.run(query, params)
         
         logger.debug(f"Created {len(decisions)} decisions for {meeting_id}")
     
-    def _create_clients(self, tx, meeting_id: str, clients: List[str]):
+    def _create_clients(self, tx, meeting_id: str, clients: List[str], tenant_id: Optional[str] = None):
         """Create Client nodes and link them to Meeting."""
         for client_name in clients:
             if not client_name:
@@ -288,15 +327,15 @@ class Neo4jService:
             
             query = """
             MATCH (m:Meeting {meetingId: $meetingId})
-            MERGE (c:Client {name: $name})
+            MERGE (c:Client {name: $name, tenantId: $tenantId})
             MERGE (m)-[:DISCUSSED_CLIENT]->(c)
             """
             
-            tx.run(query, {"meetingId": meeting_id, "name": client_name})
+            tx.run(query, {"meetingId": meeting_id, "name": client_name, "tenantId": tenant_id})
         
         logger.debug(f"Created/linked {len(clients)} clients for {meeting_id}")
     
-    def _create_projects(self, tx, meeting_id: str, projects: List[str]):
+    def _create_projects(self, tx, meeting_id: str, projects: List[str], tenant_id: Optional[str] = None):
         """Create Project nodes and link them to Meeting."""
         for project_name in projects:
             if not project_name:
@@ -304,11 +343,11 @@ class Neo4jService:
             
             query = """
             MATCH (m:Meeting {meetingId: $meetingId})
-            MERGE (p:Project {name: $name})
+            MERGE (p:Project {name: $name, tenantId: $tenantId})
             MERGE (m)-[:RELATES_TO_PROJECT]->(p)
             """
             
-            tx.run(query, {"meetingId": meeting_id, "name": project_name})
+            tx.run(query, {"meetingId": meeting_id, "name": project_name, "tenantId": tenant_id})
         
         logger.debug(f"Created/linked {len(projects)} projects for {meeting_id}")
     
@@ -329,8 +368,8 @@ class Neo4jService:
             List of action items with meeting context
         """
         query = """
-        MATCH (p:Person {name: $name})-[:ASSIGNED_TO]->(a:ActionItem)
-        MATCH (m:Meeting)-[:HAS_ACTION_ITEM]->(a)
+        MATCH (p:Person {name: $name, tenantId: $tenantId})-[:ASSIGNED_TO]->(a:ActionItem {tenantId: $tenantId})
+        MATCH (m:Meeting {tenantId: $tenantId})-[:HAS_ACTION_ITEM]->(a)
         RETURN 
             a.task AS task,
             a.dueDate AS dueDate,
@@ -344,7 +383,7 @@ class Neo4jService:
         
         try:
             with self.driver.session(database=self.database) as session:
-                result = session.run(query, {"name": person_name})
+                result = session.run(query, {"name": person_name, "tenantId": config.app.tenant_id})
                 items = [dict(record) for record in result]
                 logger.info(f"Found {len(items)} action items for {person_name}")
                 return items
@@ -363,7 +402,7 @@ class Neo4jService:
             List of meetings with summaries
         """
         query = """
-        MATCH (m:Meeting)-[:RELATES_TO_PROJECT]->(p:Project {name: $name})
+        MATCH (m:Meeting {tenantId: $tenantId})-[:RELATES_TO_PROJECT]->(p:Project {name: $name, tenantId: $tenantId})
         RETURN 
             m.meetingId AS meetingId,
             m.title AS title,
@@ -375,7 +414,7 @@ class Neo4jService:
         
         try:
             with self.driver.session(database=self.database) as session:
-                result = session.run(query, {"name": project_name})
+                result = session.run(query, {"name": project_name, "tenantId": config.app.tenant_id})
                 meetings = [dict(record) for record in result]
                 logger.info(f"Found {len(meetings)} meetings for project {project_name}")
                 return meetings
@@ -395,23 +434,23 @@ class Neo4jService:
         """
         if client_name:
             query = """
-            MATCH (c:Client {name: $name})<-[:DISCUSSED_CLIENT]-(m:Meeting)
+            MATCH (c:Client {name: $name, tenantId: $tenantId})<-[:DISCUSSED_CLIENT]-(m:Meeting {tenantId: $tenantId})
             RETURN 
                 c.name AS clientName,
                 count(m) AS meetingCount,
                 collect(m.title)[0..5] AS recentMeetings
             """
-            params = {"name": client_name}
+            params = {"name": client_name, "tenantId": config.app.tenant_id}
         else:
             query = """
-            MATCH (c:Client)<-[:DISCUSSED_CLIENT]-(m:Meeting)
+            MATCH (c:Client {tenantId: $tenantId})<-[:DISCUSSED_CLIENT]-(m:Meeting {tenantId: $tenantId})
             RETURN 
                 c.name AS clientName,
                 count(m) AS meetingCount,
                 collect(m.title)[0..5] AS recentMeetings
             ORDER BY meetingCount DESC
             """
-            params = {}
+            params = {"tenantId": config.app.tenant_id}
         
         try:
             with self.driver.session(database=self.database) as session:
@@ -431,12 +470,12 @@ class Neo4jService:
             Dictionary with node counts and relationship counts
         """
         query = """
-        MATCH (m:Meeting) WITH count(m) AS meetings
-        MATCH (p:Person) WITH meetings, count(p) AS people
-        MATCH (c:Client) WITH meetings, people, count(c) AS clients
-        MATCH (pr:Project) WITH meetings, people, clients, count(pr) AS projects
-        MATCH (a:ActionItem) WITH meetings, people, clients, projects, count(a) AS actionItems
-        MATCH (d:Decision) WITH meetings, people, clients, projects, actionItems, count(d) AS decisions
+        MATCH (m:Meeting {tenantId: $tenantId}) WITH count(m) AS meetings
+        MATCH (p:Person {tenantId: $tenantId}) WITH meetings, count(p) AS people
+        MATCH (c:Client {tenantId: $tenantId}) WITH meetings, people, count(c) AS clients
+        MATCH (pr:Project {tenantId: $tenantId}) WITH meetings, people, clients, count(pr) AS projects
+        MATCH (a:ActionItem {tenantId: $tenantId}) WITH meetings, people, clients, projects, count(a) AS actionItems
+        MATCH (d:Decision {tenantId: $tenantId}) WITH meetings, people, clients, projects, actionItems, count(d) AS decisions
         RETURN 
             meetings,
             people,
@@ -448,7 +487,7 @@ class Neo4jService:
         
         try:
             with self.driver.session(database=self.database) as session:
-                result = session.run(query)
+                result = session.run(query, {"tenantId": config.app.tenant_id})
                 record = result.single()
                 
                 if record:
@@ -480,7 +519,7 @@ class Neo4jService:
             List of matching meetings
         """
         query = """
-        MATCH (m:Meeting)
+        MATCH (m:Meeting {tenantId: $tenantId})
         WHERE m.title CONTAINS $term 
            OR m.summary CONTAINS $term
            OR m.transcript CONTAINS $term
@@ -496,7 +535,7 @@ class Neo4jService:
         
         try:
             with self.driver.session(database=self.database) as session:
-                result = session.run(query, {"term": search_term, "limit": limit})
+                result = session.run(query, {"term": search_term, "limit": limit, "tenantId": config.app.tenant_id})
                 meetings = [dict(record) for record in result]
                 logger.info(f"Found {len(meetings)} meetings matching '{search_term}'")
                 return meetings
