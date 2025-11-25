@@ -61,12 +61,24 @@ class Neo4jConfig:
             )
 
 @dataclass
+class AdkConfig:
+    """ADK (Agent Development Kit) configuration."""
+    model: str = "gemini-2.5-pro"
+    notion_token: Optional[str] = None
+
+    def __post_init__(self):
+        """Load Notion token from environment."""
+        self.notion_token = os.getenv("NOTION_TOKEN")
+
+
+@dataclass
 class AppConfig:
     """Application-wide configuration."""
     max_file_size_mb: int = 100
-    allowed_audio_formats: tuple = (".mp3", ".wav", ".m4a", ".ogg")
+    allowed_audio_formats: tuple = (".mp3", ".wav", ".m4a", ".ogg", ".mp4")
     log_level: str = "INFO"
     neo4j_enabled: bool = True
+    tenant_id: str = "demo"
 
 class Config:
     """Main configuration class."""
@@ -91,10 +103,13 @@ class Config:
             password=os.getenv("NEO4J_PASSWORD", "password")
         )
         
+        self.adk = AdkConfig()
+
         self.app = AppConfig(
             max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "100")),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
-            neo4j_enabled=os.getenv("NEO4J_ENABLED", "True") == "True"
+            neo4j_enabled=os.getenv("NEO4J_ENABLED", "True") == "True",
+            tenant_id=os.getenv("TENANT_ID", os.getenv("GRADIO_USERNAME", "demo"))
         )
     
     def validate(self) -> bool:

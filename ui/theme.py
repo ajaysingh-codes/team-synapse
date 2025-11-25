@@ -1,29 +1,24 @@
-"""
-AuroraCollab theme for Team Synapse.
+"""Seafoam theme for Team Synapse, based on Gradio's theming guide example."""
 
-Modern, meeting-focused theme with a deep indigo primary, teal accent,
-and soft neutral background – inspired by tools like Slack/Teams.
-"""
 from __future__ import annotations
 from typing import Iterable
+
 from gradio.themes.base import Base
 from gradio.themes.utils import colors, fonts, sizes
 
 
-class AuroraCollab(Base):
-    """AuroraCollab theme with indigo primary and teal secondary colors."""
-    
+class Seafoam(Base):
+    """Seafoam theme mirroring the official Gradio example."""
+
     def __init__(
         self,
         *,
-        # Deep, trustworthy primary + bright accent for CTAs
-        primary_hue: colors.Color | str = colors.indigo,
-        secondary_hue: colors.Color | str = colors.teal,
-        # Slightly cooler neutral base for app chrome
-        neutral_hue: colors.Color | str = colors.slate,
+        primary_hue: colors.Color | str = colors.emerald,
+        secondary_hue: colors.Color | str = colors.blue,
+        neutral_hue: colors.Color | str = colors.gray,
         spacing_size: sizes.Size | str = sizes.spacing_md,
-        radius_size: sizes.Size | str = sizes.radius_lg,
-        text_size: sizes.Size | str = sizes.text_md,
+        radius_size: sizes.Size | str = sizes.radius_md,
+        text_size: sizes.Size | str = sizes.text_lg,
         font: fonts.Font
         | str
         | Iterable[fonts.Font | str] = (
@@ -52,4 +47,4 @@ class AuroraCollab(Base):
 
 
 # Create theme instance used by the app
-seafoam = AuroraCollab()
+seafoam = Seafoam()

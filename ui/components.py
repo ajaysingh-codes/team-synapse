@@ -5,21 +5,43 @@ import gradio as gr
 from typing import Dict, Any, Optional
 
 
-def create_header() -> gr.Markdown:
-    """
-    Create the application header.
-    
-    Returns:
-        Gradio Markdown component with header content
-    """
+def create_header(graph_summary: Optional[Dict[str, Any]] = None) -> gr.Markdown:
+    """Render the hero header with CTA links and live stats."""
+    meetings = graph_summary.get("meetings", "—") if graph_summary else "—"
+    action_items = graph_summary.get("actionItems", "—") if graph_summary else "—"
+    clients = graph_summary.get("clients", "—") if graph_summary else "—"
+
     return gr.Markdown(
-        """
-        <div style="text-align: center; padding: 2rem 0;">
-            <h1 class="header-title">🧠 Team Synapse</h1>
-            <p class="header-subtitle">
-                Transform meeting recordings into actionable intelligence
-            </p>
-        </div>
+        f"""
+        <section id="ts-hero" class="ts-hero">
+            <div class="ts-hero-content">
+                <p class="ts-hero-kicker">Corporate Memory Engine</p>
+                <h1 class="ts-hero-headline">What changed across our portfolio since the last meeting?</h1>
+                <p class="ts-hero-subhead">
+                    Synapse turns meeting recordings into a live knowledge graph you can query before you ever walk into the room.
+                    Choose how you want to engage: analyze a past recording or monitor what's happening live.
+                </p>
+                <div class="ts-hero-cta-group">
+                    <a class="ts-hero-cta primary" href="#batch-analysis">Analyze a recording</a>
+                    <a class="ts-hero-cta ghost" href="#live-monitor">Monitor live meeting</a>
+                </div>
+                <a class="ts-hero-link" href="#mcp-chat">Connect MCP Agent →</a>
+            </div>
+            <div class="ts-hero-stats">
+                <div class="ts-hero-card">
+                    <span class="label">Meetings indexed</span>
+                    <span class="value">{meetings}</span>
+                </div>
+                <div class="ts-hero-card">
+                    <span class="label">Action items tracked</span>
+                    <span class="value">{action_items}</span>
+                </div>
+                <div class="ts-hero-card">
+                    <span class="label">Clients monitored</span>
+                    <span class="value">{clients}</span>
+                </div>
+            </div>
+        </section>
         """,
         elem_classes=["header"]
     )

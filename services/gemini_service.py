@@ -3,17 +3,15 @@ Gemini AI service for Team Synapse.
 Handles audio analysis and structured data extraction.
 """
 import json
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 import vertexai
 from vertexai.generative_models import (
-    GenerativeModel, 
-    Part, 
+    GenerativeModel,
+    Part,
     GenerationConfig,
     Tool,
     FunctionDeclaration,
     Content,
-    HarmCategory,
-    HarmBlockThreshold
 )
 
 from config import config
@@ -26,63 +24,75 @@ logger = setup_logger(__name__, config.app.log_level)
 class GeminiService:
     """Service for Gemini AI operations."""
     
-    # Enhanced prompt for structured meeting analysis
-    ANALYSIS_PROMPT = """
-You are an expert meeting analyst for an enterprise knowledge management system called Team Synapse.
+    # Corporate-focused extraction (academic and creative modes removed)
+    CORPORATE_CONFIG = {
+        "role": "expert corporate meeting analyst",
+        "action_label": "Action Items",
+        "decision_label": "Key Decisions",
+        "project_label": "Projects",
+        "people_label": "Stakeholders",
+        "instruction": "Focus on accountability, deadlines, business outcomes, strategic alignment, risks, and blockers.",
+    }
+
+    def _get_analysis_prompt(self, mode: str = "corporate") -> str:
+        """Build corporate-focused analysis prompt."""
+        persona = self.CORPORATE_CONFIG
+
+        return f"""
+You are an {persona['role']} for a knowledge management system called Team Synapse.
 
 Your task is to:
-1. Transcribe the audio file completely and accurately
-2. Extract structured information to build a corporate knowledge graph
+1. Transcribe the audio file completely and accurately.
+2. Extract structured information to build a knowledge graph.
 
-Analyze the meeting and return a JSON object with the following structure:
+Analyze the recording and return a JSON object using the following schema.
+You must reinterpret the semantics of each field according to your role, but keep
+the JSON keys and overall structure exactly the same:
 
-{
-  "transcript": "Complete verbatim transcript of the meeting",
-  "meetingTitle": "A short, descriptive title (5-8 words)",
-  "summary": "One paragraph summary highlighting key points",
-  "meetingDate": "Inferred date if mentioned, or 'unknown' (ISO format: YYYY-MM-DD)",
-  "actionItems": [
-    {
-      "task": "Specific action item description",
-      "assignee": "Person name if mentioned, or 'unassigned'",
-      "dueDate": "Due date if mentioned, or 'none' (ISO format: YYYY-MM-DD)",
-      "priority": "high/medium/low or 'unspecified'"
-    }
-  ],
-  "keyDecisions": [
-    "Each key decision made during the meeting"
-  ],
-  "sentiment": "overall/positive/neutral/negative/mixed",
-  "mentionedPeople": [
-    "All person names mentioned (first and last when available)"
-  ],
-  "mentionedClients": [
-    "All client or company names mentioned"
-  ],
-  "mentionedProjects": [
-    "All project names or codenames mentioned"
-  ],
-  "topics": [
-    "Main topics discussed (3-5 key topics)"
-  ]
-}
+- "transcript": Verbatim transcript of the recording.
+- "meetingTitle": A short, descriptive title.
+- "summary": A concise summary of the discussion.
+- "meetingDate": ISO date (YYYY-MM-DD) if mentioned, otherwise "unknown".
+- "actionItems": List of **{persona['action_label']}** with accountability and deadlines.
+    - "task": Clear description of what needs to be done.
+    - "assignee": Full name of person responsible.
+    - "assigneeRole": Job title/role if mentioned (e.g., "PM", "Engineering Lead").
+    - "dueDate": Deadline if mentioned, otherwise "none".
+    - "priority": "high", "medium", "low", or "unspecified".
+    - "status": "pending", "in_progress", "blocked", or "completed" (infer from context).
+    - "blockers": List of blockers or dependencies mentioned (e.g., ["Security audit pending"]).
+    - "estimatedEffort": Time estimate if mentioned (e.g., "2 days", "4 hours") or "unknown".
+- "keyDecisions": List of **{persona['decision_label']}** made during the meeting.
+- "mentionedProjects": List of **{persona['project_label']}** discussed.
+- "mentionedPeople": List of **{persona['people_label']}** mentioned by full name.
+- "mentionedClients": Client or company names mentioned.
+- "sentiment": Overall sentiment of the discussion (positive/neutral/negative/mixed).
+- "topics": Main topics discussed (3-5 key topics).
+- "meetingType": Type of meeting - one of: "strategy", "planning", "standup", "review", "client_call", "all_hands", "retrospective", "other".
+- "duration": Estimated duration in minutes (number) or null if unknown.
+- "metadata": Optional object with:
+    - "urgencyLevel": "urgent", "high", "normal", or "low" (based on tone and content).
+    - "requiresFollowUp": true or false.
+    - "tags": List of relevant tags for categorization.
 
 CRITICAL INSTRUCTIONS:
-- Return ONLY valid JSON, no markdown formatting, no code blocks
-- Do not include ```json or ``` markers
-- Ensure all string values are properly escaped
-- If information is not available, use the defaults specified above
-- Be comprehensive in the transcript
-- Extract ALL names, clients, and projects mentioned
+- {persona['instruction']}
+- Return ONLY valid JSON, with no markdown formatting or code fences.
+- Do NOT include ```json or ``` markers.
+- Ensure all string values are properly escaped.
+- If information is not available, use sensible defaults as described above.
 """
 
-    # Prompt for extracting meeting context from a calendar invite / agenda
+    # Prompt for extracting meeting context from a wide range of "context documents"
     CONTEXT_PROMPT = """
-You are an expert assistant that extracts LIGHTWEIGHT meeting metadata from raw calendar invites,
-email invites, and agenda documents for a system called Team Synapse.
+You are an expert assistant that extracts LIGHTWEIGHT meeting or session metadata from
+raw "context documents" for a system called Team Synapse.
 
-Your job is to read the provided text (which may be a calendar invite, .ics file, pasted email,
-or written agenda) and return a SINGLE JSON object with the following structure:
+These documents may include calendar invites, meeting agendas, course syllabuses,
+assignment sheets, or similar planning/description documents.
+
+Your job is to read the provided text and return a SINGLE JSON object with the
+following structure:
 
 {
   "sourceType": "ics" or "other",
@@ -150,6 +160,7 @@ Always answer in a helpful, professional, and concise manner.
         gcs_uri: str,
         mime_type: str = "audio/mpeg",
         meeting_context: Optional[Dict[str, Any]] = None,
+        analysis_mode: str = "corporate",  # Only corporate mode supported
     ) -> Dict[str, Any]:
         """
         Analyze audio file with Gemini.
@@ -169,7 +180,7 @@ Always answer in a helpful, professional, and concise manner.
             Exception: If analysis fails
         """
         try:
-            logger.info(f"Starting Gemini analysis for: {gcs_uri}")
+            logger.info(f"Starting Gemini analysis ({analysis_mode}) for: {gcs_uri}")
             
             # Create audio part from GCS URI
             audio_part = Part.from_uri(gcs_uri, mime_type=mime_type)
@@ -210,12 +221,20 @@ Always answer in a helpful, professional, and concise manner.
                 )
                 parts.append(context_text)
 
-            # Generate content with the audio, optional context, and prompt
-            parts.append(self.ANALYSIS_PROMPT)
+            # Generate content with the audio, optional context, and persona-aware prompt
+            prompt_text = self._get_analysis_prompt(analysis_mode)
+            parts.append(prompt_text)
+
+            # Use JSON-focused generation config to improve structured extraction
+            json_config = GenerationConfig(
+                temperature=config.gemini.temperature,
+                max_output_tokens=config.gemini.max_output_tokens,
+                response_mime_type="application/json",
+            )
 
             response = self.model.generate_content(
                 parts,
-                generation_config=self.generation_config
+                generation_config=json_config,
             )
             
             # Extract and parse response
@@ -271,9 +290,16 @@ Always answer in a helpful, professional, and concise manner.
                 + source_text
             )
 
+            # Use JSON-focused generation config to improve structured extraction
+            json_config = GenerationConfig(
+                temperature=config.gemini.temperature,
+                max_output_tokens=config.gemini.max_output_tokens,
+                response_mime_type="application/json",
+            )
+
             response = self.model.generate_content(
                 [prompt],
-                generation_config=self.generation_config,
+                generation_config=json_config,
             )
 
             response_text = response.text.strip()
@@ -391,6 +417,189 @@ Always answer in a helpful, professional, and concise manner.
             raise ValueError(f"Analysis missing required fields: {missing_fields}")
         
         logger.debug("Analysis validation passed")
+    
+    def extract_entities(self, text: str) -> Dict[str, List[str]]:
+        """
+        Extract entities from text using Gemini.
+        
+        Args:
+            text: Text to extract entities from
+            
+        Returns:
+            Dictionary with entity types and lists of entities
+        """
+        try:
+            prompt = f"""
+            Extract entities from this text:
+            
+            {text}
+            
+            Return ONLY a plain JSON object (no code blocks, no markdown):
+            {{
+                "people": ["name1", "name2"],
+                "projects": ["project1"],
+                "clients": ["company1"],
+                "technologies": ["tech1"]
+            }}
+            
+            Rules:
+            - Return ONLY the JSON object, nothing else
+            - No markdown code blocks (no ```json)
+            - Only extract actual proper nouns, not generic terms
+            - Empty arrays if no entities found
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=GenerationConfig(
+                    temperature=0.1,
+                    top_p=0.95,
+                    max_output_tokens=1024,
+                )
+            )
+            
+            # Parse JSON response - strip code blocks if present
+            response_text = response.text.strip()
+            
+            # Remove markdown code blocks if Gemini added them
+            if response_text.startswith("```"):
+                # Find the actual JSON content between code fences
+                lines = response_text.split('\n')
+                # Skip first line (```json or ```) and last line (```)
+                response_text = '\n'.join(lines[1:-1]).strip()
+            
+            result = json.loads(response_text)
+            
+            # Ensure all keys exist
+            entities = {
+                "people": result.get("people", []),
+                "projects": result.get("projects", []),
+                "clients": result.get("clients", []),
+                "technologies": result.get("technologies", [])
+            }
+            
+            return entities
+            
+        except Exception as e:
+            logger.error(f"Error extracting entities: {e}")
+            return {"people": [], "projects": [], "clients": [], "technologies": []}
+    
+    def extract_commitments(self, transcript: str) -> List[Dict[str, Any]]:
+        """
+        Extract commitments and promises from conversation transcript.
+        
+        Args:
+            transcript: Conversation transcript
+            
+        Returns:
+            List of commitment dictionaries
+        """
+        try:
+            prompt = f"""
+            Analyze this conversation for commitments and promises:
+            
+            {transcript}
+            
+            Extract any commitments made, including:
+            - Who made the commitment (assignee)
+            - What was promised (task)
+            - When it's due (deadline) - if mentioned
+            - What it depends on (dependencies) - if mentioned
+            
+            Return as JSON array of objects with keys:
+            assignee, task, deadline, dependencies
+            
+            Only include clear commitments, not vague statements.
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=GenerationConfig(
+                    temperature=0.2,
+                    top_p=0.95,
+                    max_output_tokens=2048,
+                )
+            )
+            
+            # Parse JSON response - strip code blocks if present
+            response_text = response.text.strip()
+            if response_text.startswith("```"):
+                lines = response_text.split('\n')
+                response_text = '\n'.join(lines[1:-1]).strip()
+            
+            commitments = json.loads(response_text)
+            
+            # Ensure it's a list
+            if not isinstance(commitments, list):
+                commitments = [commitments] if commitments else []
+            
+            # Validate structure
+            for commit in commitments:
+                commit.setdefault("assignee", "Unassigned")
+                commit.setdefault("task", "")
+                commit.setdefault("deadline", "Not specified")
+                commit.setdefault("dependencies", [])
+            
+            return commitments
+            
+        except Exception as e:
+            logger.error(f"Error extracting commitments: {e}")
+            return []
+    
+    def extract_live_entities(self, transcript_chunk: str) -> Dict[str, Any]:
+        """
+        Extract entities from a live transcript chunk.
+        Lightweight extraction for real-time processing.
+        
+        Args:
+            transcript_chunk: Recent transcript text
+            
+        Returns:
+            Dictionary with extracted entities
+        """
+        try:
+            # Use simpler extraction for real-time
+            entities = self.extract_entities(transcript_chunk)
+            
+            # Format for live agent
+            return {
+                "currentTopic": self._extract_topic(transcript_chunk),
+                "people": entities.get("people", []),
+                "projects": entities.get("projects", []),
+                "clients": entities.get("clients", []),
+                "decisions": [],  # Would need more context
+                "questions": self._extract_questions(transcript_chunk),
+                "actionItems": [],  # Would need commitment detection
+                "keyTerms": entities.get("technologies", [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in live entity extraction: {e}")
+            return {
+                "currentTopic": "",
+                "people": [],
+                "projects": [],
+                "clients": [],
+                "decisions": [],
+                "questions": [],
+                "actionItems": [],
+                "keyTerms": []
+            }
+    
+    def _extract_topic(self, text: str) -> str:
+        """Extract the main topic from text."""
+        try:
+            prompt = f"What is the main topic of this text in 5 words or less: {text[:200]}"
+            response = self.model.generate_content(prompt)
+            return response.text.strip()
+        except:
+            return ""
+    
+    def _extract_questions(self, text: str) -> List[str]:
+        """Extract questions from text."""
+        import re
+        questions = re.findall(r'[^.!?]*\?', text)
+        return [q.strip() for q in questions if len(q.strip()) > 10]
 
 
 # Global service instance
