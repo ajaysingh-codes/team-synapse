@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import datetime, timedelta
 from services.neo4j_service import neo4j_service
 from utils import setup_logger
+from config import config
 
 logger = setup_logger(__name__)
 
@@ -133,10 +134,10 @@ def find_blockers() -> str:
         Formatted markdown string with blocked items
     """
     query = """
-    MATCH (a:ActionItem)
+    MATCH (a:ActionItem {tenantId: $tenantId})
     WHERE a.status = 'blocked' OR size(a.blockers) > 0
-    OPTIONAL MATCH (m:Meeting)-[:HAS_ACTION_ITEM]->(a)
-    OPTIONAL MATCH (p:Person)-[:ASSIGNED_TO]->(a)
+    OPTIONAL MATCH (m:Meeting {tenantId: $tenantId})-[:HAS_ACTION_ITEM]->(a)
+    OPTIONAL MATCH (p:Person {tenantId: $tenantId})-[:ASSIGNED_TO]->(a)
     RETURN a.task AS task,
            a.assignee AS assignee,
            a.blockers AS blockers,
@@ -153,7 +154,7 @@ def find_blockers() -> str:
 
     try:
         with neo4j_service.driver.session(database=neo4j_service.database) as session:
-            result = session.run(query)
+            result = session.run(query, tenantId=config.app.tenant_id)
             blocked_items = [dict(record) for record in result]
     except Exception as e:
         return f"Error finding blockers: {e}"
@@ -202,10 +203,10 @@ def get_historical_context(topic: str, time_range_days: int = 30) -> str:
         cutoff_date = (datetime.now() - timedelta(days=time_range_days)).isoformat()
 
         query = """
-        MATCH (m:Meeting)
+        MATCH (m:Meeting {tenantId: $tenantId})
         WHERE m.transcript CONTAINS $topic AND m.meetingDate >= $cutoff
-        OPTIONAL MATCH (m)-[:HAS_DECISION]->(d:Decision)
-        OPTIONAL MATCH (m)-[:HAS_ACTION_ITEM]->(a:ActionItem)
+        OPTIONAL MATCH (m)-[:HAS_DECISION]->(d:Decision {tenantId: $tenantId})
+        OPTIONAL MATCH (m)-[:HAS_ACTION_ITEM]->(a:ActionItem {tenantId: $tenantId})
         RETURN m.title AS meetingTitle,
                m.meetingDate AS date,
                m.summary AS summary,
@@ -216,7 +217,7 @@ def get_historical_context(topic: str, time_range_days: int = 30) -> str:
         """
 
         with neo4j_service.driver.session(database=neo4j_service.database) as session:
-            result = session.run(query, topic=topic, cutoff=cutoff_date)
+            result = session.run(query, topic=topic, cutoff=cutoff_date, tenantId=config.app.tenant_id)
             meetings = [dict(record) for record in result]
 
         if not meetings:
@@ -261,7 +262,7 @@ def analyze_team_health() -> str:
     """
     try:
         query = """
-        MATCH (p:Person)-[:ASSIGNED_TO]->(a:ActionItem)
+        MATCH (p:Person {tenantId: $tenantId})-[:ASSIGNED_TO]->(a:ActionItem {tenantId: $tenantId})
         WITH p.name AS person,
              COUNT(a) AS totalTasks,
              SUM(CASE WHEN a.status = 'blocked' THEN 1 ELSE 0 END) AS blockedTasks,
@@ -272,7 +273,7 @@ def analyze_team_health() -> str:
         """
 
         with neo4j_service.driver.session(database=neo4j_service.database) as session:
-            result = session.run(query)
+            result = session.run(query, tenantId=config.app.tenant_id)
             team_metrics = [dict(record) for record in result]
 
         if not team_metrics:

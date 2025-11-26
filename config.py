@@ -3,7 +3,7 @@ Configuration management for Team Synapse.
 Handles all environment variables and application settings.
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 try:
@@ -78,7 +78,7 @@ class AppConfig:
     allowed_audio_formats: tuple = (".mp3", ".wav", ".m4a", ".ogg", ".mp4")
     log_level: str = "INFO"
     neo4j_enabled: bool = True
-    tenant_id: str = "demo"
+    tenant_id: str = field(default="demo")  # Mutable for multi-tenancy
 
 class Config:
     """Main configuration class."""

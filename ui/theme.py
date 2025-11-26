@@ -1,4 +1,4 @@
-"""Seafoam theme for Team Synapse, based on Gradio's theming guide example."""
+"""Blue theme for Team Synapse with rounded corners and friendly aesthetics."""
 
 from __future__ import annotations
 from typing import Iterable
@@ -7,17 +7,17 @@ from gradio.themes.base import Base
 from gradio.themes.utils import colors, fonts, sizes
 
 
-class Seafoam(Base):
-    """Seafoam theme mirroring the official Gradio example."""
+class TeamSynapseTheme(Base):
+    """Team Synapse theme with blue primary color and large rounded corners."""
 
     def __init__(
         self,
         *,
-        primary_hue: colors.Color | str = colors.emerald,
-        secondary_hue: colors.Color | str = colors.blue,
-        neutral_hue: colors.Color | str = colors.gray,
+        primary_hue: colors.Color | str = colors.blue,
+        secondary_hue: colors.Color | str = colors.cyan,
+        neutral_hue: colors.Color | str = colors.slate,
         spacing_size: sizes.Size | str = sizes.spacing_md,
-        radius_size: sizes.Size | str = sizes.radius_md,
+        radius_size: sizes.Size | str = sizes.radius_lg,
         text_size: sizes.Size | str = sizes.text_lg,
         font: fonts.Font
         | str
@@ -47,4 +47,4 @@ class Seafoam(Base):
 
 
 # Create theme instance used by the app
-seafoam = Seafoam()
+team_synapse_theme = TeamSynapseTheme()
